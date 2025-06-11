@@ -67,6 +67,7 @@ class JupyterOutput(BaseModel):
                                 self.display_content.append(
                                     Markdown("\n\n".join(content))
                                 )
+                                content.clear() # Clear content after creating a Markdown object
 
         return handler
 

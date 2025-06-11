@@ -160,6 +160,12 @@ class TranslatorAgent:
         logger.info(
             f"TranslatorAgent: Received input message for translation to English (first 200 chars): '{message[:200]}...'"
         )
+        if not message or message.strip() == "":
+            logger.info("Input message is empty or whitespace. Skipping translation to English.")
+            # Set source_language to 'en' as a sensible default even if no detection is done.
+            # This prevents NoneType issues if translate_output is called later without this method succeeding.
+            self.source_language = "en"
+            return message
         try:
             self.source_language = detect(message)
         except LangDetectException as e:
