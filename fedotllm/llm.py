@@ -32,29 +32,29 @@ class AIInference:
         model: str | None = None,
     ):
         settings = get_settings()
-        self.base_url = base_url or settings.get("config.base_url")
-        self.model = model or settings.get("config.model")
+        self.base_url = base_url or settings.get("config.llm_api_base") # Corrected key
+        self.model = model or settings.get("config.llm_model")       # Corrected key
         self.api_key = api_key or os.getenv("FEDOTLLM_LLM_API_KEY")
 
         if not self.api_key:
             raise Exception(
-                "API key not provided and FEDOTLLM_LLM_API_KEY environment variable not set"
+                "LLM API key is not set. Provide it via argument or FEDOTLLM_LLM_API_KEY env variable."
             )
 
-        self.completion_params = {
+        self.completion_params = { # Base parameters, can be overridden by query_kwargs
             "model": self.model,
             "api_key": self.api_key,
             "base_url": self.base_url,
-            # "max_completion_tokens": 8000,
             "extra_headers": {"X-Title": "FEDOT.LLM"}
         }
 
     @retry(
         stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=4, max=10)
     )
-    def create(self, messages: str, response_model: Type[T]) -> T:
-        messages = f"{messages}\n{prompts.utils.structured_response(response_model)}"
-        response = self.query(messages)
+    def create(self, message: str, response_model: Type[T]) -> T: # Renamed messages to message for clarity
+        system_prompt = prompts.utils.structured_response(response_model)
+        # Pass system_prompt to query method
+        response = self.query(user_message=message, system_message=system_prompt)
         json_obj = parse_json(response)
         return response_model.model_validate(json_obj)
 
@@ -63,17 +63,25 @@ class AIInference:
         wait=wait_exponential(multiplier=1, min=4, max=10),
         reraise=True,
     )
-    def query(self, messages: str) -> str:
-        messages = [{"role": "user", "content": messages}]
+    def query(self, user_message: str, system_message: Optional[str] = None, **query_kwargs) -> str:
+        formatted_messages = []
+        if system_message:
+            formatted_messages.append({"role": "system", "content": system_message})
+        formatted_messages.append({"role": "user", "content": user_message})
+
+        # Merge base completion_params with specific query_kwargs
+        # query_kwargs can override temperature, frequency_penalty, etc.
+        final_params = {**self.completion_params, **query_kwargs}
+
         response = litellm.completion(
-            messages=messages,
-            **self.completion_params,
+            messages=formatted_messages,
+            **final_params,
         )
         return response.choices[0].message.content
 
 
 class OpenaiEmbeddings:
-    MAX_INPUT = 8191
+    MAX_INPUT = 8191 # Default, can be overridden by settings
 
     def __init__(
         self,
@@ -81,33 +89,34 @@ class OpenaiEmbeddings:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
     ):
-        base_url = base_url or get_settings().get("config.base_url", None)
-        model = model or get_settings().get("config.embeddings", None)
+        settings = get_settings()
+        self.base_url = base_url or settings.get("config.embeddings_api_base") # Corrected key
+        self.model = model or settings.get("config.embeddings_model")       # Corrected key
+        self.api_key = api_key or os.getenv("FEDOTLLM_EMBEDDINGS_API_KEY")
+        self.MAX_INPUT = settings.get("config.max_input_tokens", OpenaiEmbeddings.MAX_INPUT)
 
-        if api_key:
-            self.api_key = api_key
-        elif "FEDOTLLM_EMBEDDINGS_API_KEY" in os.environ:
-            self.api_key = os.environ["FEDOTLLM_EMBEDDINGS_API_KEY"]
-        else:
+
+        if not self.api_key:
             raise Exception(
-                "OpenAI API env variable FEDOTLLM_EMBEDDINGS_API_KEY not set"
+                "Embeddings API key is not set. Provide it via argument or FEDOTLLM_EMBEDDINGS_API_KEY env variable."
             )
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = model
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url) # Use self.api_key and self.base_url
 
-    def encode(self, input: str):
+    def encode(self, input_text: str): # Renamed input to input_text
+        num_tokens = num_tokens_from_string(input_text, self.model if "ada" in self.model else "cl100k_base") # Use model for token count if applicable
+        if num_tokens > self.MAX_INPUT:
+            raise Exception(f"Input exceeds the limit of {self.MAX_INPUT} tokens for model {self.model}. Given: {num_tokens}")
+
         try:
             response = self.client.embeddings.create(
-                model=self.model, input=input, encoding_format="float"
+                model=self.model, input=[input_text], encoding_format="float" # API expects a list of inputs
             )
-        except Exception:
-            len_embeddings = self.num_tokens_from_string(input)
-            if len_embeddings > self.MAX_INPUT:
-                raise Exception(f"Input exceeds the limit of <{self.model}>!")
-            else:
-                raise Exception("Embeddings generation failed!")
-        return response.data
+            return response.data # Return the list of embedding objects
+        except Exception as e:
+            # Log the error for more details
+            # logger.error(f"Embeddings generation failed for model {self.model}: {e}")
+            raise Exception(f"Embeddings generation failed! Original error: {e}")
 
 
 def num_tokens_from_string(string: str, encoding_name: str = "cl100k_base") -> int:

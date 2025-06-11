@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Callable, List
+from typing import Callable, List, Optional # Added Optional
 
 import pandas as pd
 from langchain_core.messages import HumanMessage
@@ -18,21 +18,21 @@ class FedotAI:
     def __init__(
         self,
         task_path: Path | str,
-        inference: AIInference = AIInference(),
-        embeddings: OpenaiEmbeddings = OpenaiEmbeddings(),
-        handlers: List[Callable[[StreamEvent], None]] = [],
+        inference: Optional[AIInference] = None, # Default to None
+        embeddings: Optional[OpenaiEmbeddings] = None, # Default to None
+        handlers: Optional[List[Callable[[StreamEvent], None]]] = None, # Optional list of handlers
         workspace: Path | str | None = None,
     ):
         if isinstance(task_path, str):
             task_path = Path(task_path)
         self.task_path = task_path.resolve()
-        assert task_path.is_dir(), (
-            "Task path does not exist, please provide a valid directory."
+        assert self.task_path.is_dir(), ( # Used self.task_path here
+            "Task path does not exist or is not a directory." # Simplified message slightly
         )
 
-        self.inference = inference
-        self.embeddings = embeddings
-        self.handlers = handlers
+        self.inference = inference if inference is not None else AIInference()
+        self.embeddings = embeddings if embeddings is not None else OpenaiEmbeddings()
+        self.handlers = handlers if handlers is not None else [] # Ensure handlers is a list
 
         if isinstance(workspace, str):
             workspace = Path(workspace)

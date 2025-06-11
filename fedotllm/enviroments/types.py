@@ -25,3 +25,5 @@ class CodeObservation(BaseModel):
     error: bool
     stdout: str
     stderr: str
+
+Observation = CodeObservation # Alias for backwards compatibility or other usages
