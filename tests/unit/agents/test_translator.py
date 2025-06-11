@@ -1,196 +1,229 @@
-# tests/unit/agents/test_translator.py
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 
+# Assuming AIInference is in fedotllm.llm
+from fedotllm.llm import AIInference
 from fedotllm.agents.translator import TranslatorAgent
 from langdetect import LangDetectException
 
-# Mock LANGUAGES from googletrans
-MOCK_LANGUAGES = {
-    'en': 'english',
-    'es': 'spanish',
-    'fr': 'french',
-    # Add other languages as needed for tests
-}
+# No longer need MOCK_LANGUAGES from googletrans
 
-@patch('fedotllm.agents.translator.LANGUAGES', MOCK_LANGUAGES)
+@pytest.fixture
+def mock_inference_fixture(): # Renamed to avoid conflict with parameter names in tests
+    return MagicMock(spec=AIInference)
+
 class TestTranslatorAgent:
 
     @patch('fedotllm.agents.translator.detect')
-    def test_language_detection_success(self, mock_detect):
+    def test_language_detection_success(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'es'
-        agent = TranslatorAgent()
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        mock_inference_fixture.create.return_value = "Translated text"
         agent.translate_input_to_english("Hola mundo")
         assert agent.source_language == 'es'
         mock_detect.assert_called_once_with("Hola mundo")
 
     @patch('fedotllm.agents.translator.detect')
-    def test_language_detection_failure_defaults_to_english(self, mock_detect):
+    def test_language_detection_failure_defaults_to_english(self, mock_detect, mock_inference_fixture):
         mock_detect.side_effect = LangDetectException(0, "Detection failed")
-        agent = TranslatorAgent()
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        mock_inference_fixture.create.return_value = "Translated text"
         agent.translate_input_to_english("Invalid text for detection")
         assert agent.source_language == 'en'
         mock_detect.assert_called_once_with("Invalid text for detection")
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_translation_to_english_success(self, MockTranslator, mock_detect):
+    def test_translation_to_english_success(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'es'
-        mock_translator_instance = MockTranslator.return_value
-        mock_translator_instance.translate.return_value = MagicMock(text="Hello world")
+        mock_inference_fixture.create.return_value = "Hello world"
 
-        agent = TranslatorAgent()
+        agent = TranslatorAgent(inference=mock_inference_fixture)
         translated_text = agent.translate_input_to_english("Hola mundo")
 
         assert translated_text == "Hello world"
         assert agent.source_language == 'es'
-        mock_translator_instance.translate.assert_called_once_with("Hola mundo", dest='en')
+        mock_inference_fixture.create.assert_called_once()
+
+        args, kwargs = mock_inference_fixture.create.call_args
+        sent_messages = kwargs.get('messages', []) or (args[0] if args else [])
+        assert len(sent_messages) == 1
+        prompt = sent_messages[0]['content']
+        assert "Translate the following text from es to en." in prompt
+        assert "Hola mundo" in prompt
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_translation_to_english_error_returns_original(self, MockTranslator, mock_detect):
+    def test_translation_to_english_inference_error_returns_original(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'es'
-        mock_translator_instance = MockTranslator.return_value
-        mock_translator_instance.translate.side_effect = Exception("Translation API error")
+        mock_inference_fixture.create.side_effect = Exception("LLM API error")
 
-        agent = TranslatorAgent()
-        translated_text = agent.translate_input_to_english("Hola mundo")
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        original_text = "Hola mundo"
+        translated_text = agent.translate_input_to_english(original_text)
 
-        assert translated_text == "Hola mundo" # Returns original on error
+        assert translated_text == original_text
         assert agent.source_language == 'es'
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_english_input_not_translated(self, MockTranslator, mock_detect):
+    def test_english_input_not_translated(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'en'
-        mock_translator_instance = MockTranslator.return_value
 
-        agent = TranslatorAgent()
+        agent = TranslatorAgent(inference=mock_inference_fixture)
         input_text = "Hello world, this is English."
         translated_text = agent.translate_input_to_english(input_text)
 
         assert translated_text == input_text
         assert agent.source_language == 'en'
-        mock_translator_instance.translate.assert_not_called()
+        mock_inference_fixture.create.assert_not_called()
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_translation_to_source_language_success(self, MockTranslator, mock_detect):
-        # First, simulate input translation to set source_language
+    def test_translation_to_source_language_success(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'es'
-        mock_translator_input = MockTranslator.return_value
-        # Clear any previous call counts on the mock for this specific test flow
-        mock_translator_input.translate.reset_mock()
-        mock_translator_input.translate.return_value = MagicMock(text="Hello world") # Mock input translation
 
-        agent = TranslatorAgent()
-        agent.translate_input_to_english("Hola mundo") # This sets source_language to 'es'
+        mock_inference_fixture.create.return_value = "Hello world"
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        agent.translate_input_to_english("Hola mundo")
         assert agent.source_language == 'es'
-        mock_translator_input.translate.assert_called_once_with("Hola mundo", dest='en')
 
-
-        # Now, test output translation
-        # Ensure the mock is configured for the output translation call
-        mock_translator_output = MockTranslator.return_value
-        mock_translator_output.translate.return_value = MagicMock(text="Hola mundo otra vez") # Mock output translation
+        mock_inference_fixture.create.reset_mock()
+        mock_inference_fixture.create.return_value = "Hola mundo otra vez"
 
         translated_output = agent.translate_output_to_source_language("Hello world again")
 
         assert translated_output == "Hola mundo otra vez"
-        # Ensure translate was called for output with correct destination
-        mock_translator_output.translate.assert_called_with("Hello world again", dest='es')
+        mock_inference_fixture.create.assert_called_once()
+        args, kwargs = mock_inference_fixture.create.call_args
+        sent_messages = kwargs.get('messages', []) or (args[0] if args else [])
+        prompt = sent_messages[0]['content']
+        assert "Translate the following text from en to es." in prompt
+        assert "Hello world again" in prompt
+
+
+    def test_extract_code_blocks(self, mock_inference_fixture):
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        text_with_code = """Some text
+```python
+print('hello')
+```
+More text
+```
+x = 1
+```"""
+        processed_text, code_map = agent._extract_code_blocks(text_with_code)
+
+        placeholder_0 = f"{agent.code_block_placeholder_prefix}_0__"
+        placeholder_1 = f"{agent.code_block_placeholder_prefix}_1__"
+
+        assert placeholder_0 in processed_text
+        assert placeholder_1 in processed_text
+        assert "print('hello')" not in processed_text
+        assert "x = 1" not in processed_text
+
+        assert len(code_map) == 2
+        assert code_map[placeholder_0] == "```python\nprint('hello')\n```"
+        assert code_map[placeholder_1] == "```\nx = 1\n```"
+
+    def test_reinsert_code_blocks(self, mock_inference_fixture):
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        text_with_placeholders = f"""Texto traducido
+{agent.code_block_placeholder_prefix}_0__
+Más texto traducido
+{agent.code_block_placeholder_prefix}_1__"""
+        code_map = {
+            f"{agent.code_block_placeholder_prefix}_0__": "```python\nprint('hello')\n```",
+            f"{agent.code_block_placeholder_prefix}_1__": "```\nx = 1\n```"
+        }
+
+        final_text = agent._reinsert_code_blocks(text_with_placeholders, code_map)
+
+        expected_text = """Texto traducido
+```python
+print('hello')
+```
+Más texto traducido
+```
+x = 1
+```"""
+        assert final_text == expected_text
+        assert agent.code_block_placeholder_prefix not in final_text
 
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_translation_to_source_language_error_returns_original(self, MockTranslator, mock_detect):
+    def test_code_block_preservation_e2e(self, mock_detect, mock_inference_fixture):
         mock_detect.return_value = 'es'
-        agent = TranslatorAgent()
-        # Reset mock from any potential previous calls in other tests if instance is somehow shared (though it shouldn't be)
-        MockTranslator.return_value.translate.reset_mock()
-        # Simulate input translation call
-        MockTranslator.return_value.translate.return_value = MagicMock(text="Hello world")
-        agent.translate_input_to_english("Hola mundo") # Sets source_language to 'es'
-        assert agent.source_language == 'es'
+        original_text = """Texto antes
+```python
+# Esto es un comentario
+print('Hola')
+```
+Texto después"""
 
-        # Configure mock for the output translation call to raise an error
-        mock_translator_instance = MockTranslator.return_value
-        mock_translator_instance.translate.side_effect = Exception("Translation API error")
+        # Use the agent's placeholder prefix to construct the expected placeholder
+        agent_for_placeholder = TranslatorAgent(inference=mock_inference_fixture) # Temp agent to get prefix if needed
+        placeholder_0 = f"{agent_for_placeholder.code_block_placeholder_prefix}_0__"
 
-        translated_output = agent.translate_output_to_source_language("Hello world again")
-        assert translated_output == "Hello world again" # Returns original on error
+        placeholder_text_from_llm = f"""Translated before
+{placeholder_0}
+Translated after"""
+        mock_inference_fixture.create.return_value = placeholder_text_from_llm
 
-    @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_unsupported_language_for_input_translation(self, MockTranslator, mock_detect):
-        mock_detect.return_value = 'xx' # Unsupported language
-        agent = TranslatorAgent()
-        input_text = "Text in unsupported language"
-        translated_text = agent.translate_input_to_english(input_text)
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        translated_text = agent.translate_input_to_english(original_text)
 
-        assert translated_text == input_text # Should return original
-        assert agent.source_language == 'xx'
-        MockTranslator.return_value.translate.assert_not_called()
+        expected_final_text = """Translated before
+```python
+# Esto es un comentario
+print('Hola')
+```
+Translated after"""
+        assert translated_text == expected_final_text
 
-    @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_unsupported_language_for_output_translation(self, MockTranslator, mock_detect):
-        mock_detect.return_value = 'xx' # Unsupported language
-        agent = TranslatorAgent()
-        # Simulate input process
-        agent.translate_input_to_english("Text in unsupported language") # Sets source_language to 'xx'
-        assert agent.source_language == 'xx'
-        MockTranslator.return_value.translate.reset_mock() # Reset mock calls from input processing
-
-        english_text = "This is the English response"
-        translated_output = agent.translate_output_to_source_language(english_text)
-
-        assert translated_output == english_text # Should return original English text
-        MockTranslator.return_value.translate.assert_not_called()
+        mock_inference_fixture.create.assert_called_once()
+        args, kwargs = mock_inference_fixture.create.call_args
+        sent_messages = kwargs.get('messages', []) or (args[0] if args else [])
+        prompt = sent_messages[0]['content']
+        assert f"placeholders like {agent.code_block_placeholder_prefix}_NUMBER__" in prompt
+        assert "MUST NOT be translated or altered" in prompt
+        assert placeholder_0 in prompt
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_markdown_preservation_basic(self, MockTranslator, mock_detect):
-        mock_detect.return_value = 'es'
-        mock_translator_instance = MockTranslator.return_value
+    def test_markdown_preservation_prompting(self, mock_detect, mock_inference_fixture):
+        mock_detect.return_value = 'fr'
+        original_text = "# Titre\nCeci est du **gras** et de l'*italique*."
 
-        original_md = "# Title\nSome *bold* text."
-        translated_md_mock = "# Título\nUn texto *en negrita*."
-        # Input translation
-        mock_translator_instance.translate.return_value = MagicMock(text=translated_md_mock)
+        mock_inference_fixture.create.return_value = "# Title\nThis is **bold** and *italic*."
 
-        agent = TranslatorAgent()
-        translated_text = agent.translate_input_to_english(original_md)
-        assert translated_text == translated_md_mock
-        mock_translator_instance.translate.assert_called_once_with(original_md, dest='en')
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        agent.translate_input_to_english(original_text)
 
-        # Simulate output translation
-        agent.source_language = 'es' # Ensure source language is set for output
-        mock_translator_instance.translate.return_value = MagicMock(text=original_md) # Mocking translation back
-        output_text = agent.translate_output_to_source_language(translated_md_mock)
-        assert output_text == original_md
-        mock_translator_instance.translate.assert_called_with(translated_md_mock, dest='es')
+        mock_inference_fixture.create.assert_called_once()
+        args, kwargs = mock_inference_fixture.create.call_args
+        sent_messages = kwargs.get('messages', []) or (args[0] if args else [])
+        prompt = sent_messages[0]['content']
 
+        assert "Translate the following text from fr to en." in prompt
+        assert "crucial to preserve the original formatting exactly" in prompt
+        assert "markdown syntax: headers" in prompt
+        assert "bold (e.g., **text** or __text__)" in prompt
+        assert "italics (e.g., *text* or _text_)" in prompt
+        assert "links (e.g., [text](url))" in prompt
+        assert "tables (using pipe and hyphen syntax)" in prompt
+        # In this case, original_text has no code blocks, so it's passed as is to the prompt
+        assert original_text in prompt
 
     @patch('fedotllm.agents.translator.detect')
-    @patch('fedotllm.agents.translator.Translator')
-    def test_code_block_preservation_basic(self, MockTranslator, mock_detect):
-        mock_detect.return_value = 'es'
-        mock_translator_instance = MockTranslator.return_value
+    def test_unsupported_language_detection_still_calls_llm(self, mock_detect, mock_inference_fixture):
+        mock_detect.return_value = 'xx'
+        original_text = "Texte dans une langue inconnue."
+        translated_by_llm = "Text in an unknown language, translated by LLM."
+        mock_inference_fixture.create.return_value = translated_by_llm
 
-        original_code = "```python\nprint('Hello')\n```"
-        translated_code_mock = "```python\nprint('Hola')\n```"
-        # Input translation
-        mock_translator_instance.translate.return_value = MagicMock(text=translated_code_mock)
+        agent = TranslatorAgent(inference=mock_inference_fixture)
+        translated_text = agent.translate_input_to_english(original_text)
 
-        agent = TranslatorAgent()
-        translated_text = agent.translate_input_to_english(original_code)
-        assert translated_text == translated_code_mock
-        mock_translator_instance.translate.assert_called_once_with(original_code, dest='en')
-
-        # Simulate output translation
-        agent.source_language = 'es'
-        mock_translator_instance.translate.return_value = MagicMock(text=original_code) # Mocking translation back
-        output_text = agent.translate_output_to_source_language(translated_code_mock)
-        assert output_text == original_code
-        mock_translator_instance.translate.assert_called_with(translated_code_mock, dest='es')
+        assert translated_text == translated_by_llm
+        mock_inference_fixture.create.assert_called_once()
+        args, kwargs = mock_inference_fixture.create.call_args
+        sent_messages = kwargs.get('messages', []) or (args[0] if args else [])
+        prompt = sent_messages[0]['content']
+        assert "Translate the following text from xx to en." in prompt
+        assert original_text in prompt

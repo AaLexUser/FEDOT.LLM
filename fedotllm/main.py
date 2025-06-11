@@ -45,7 +45,7 @@ class FedotAI:
             )
 
         dataset = Dataset.from_path(self.task_path)
-        translator_agent = TranslatorAgent()
+        translator_agent = TranslatorAgent(inference=self.inference)
         translated_message = translator_agent.translate_input_to_english(message)
 
         automl_agent = AutoMLAgentChat(
@@ -91,7 +91,7 @@ class FedotAI:
             )
 
         dataset = Dataset.from_path(self.task_path)
-        translator_agent = TranslatorAgent()
+        translator_agent = TranslatorAgent(inference=self.inference)
         translated_message = translator_agent.translate_input_to_english(message)
 
         automl_agent = AutoMLAgentChat(
