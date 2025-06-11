@@ -25,5 +25,6 @@ class CodeObservation(BaseModel):
     error: bool
     stdout: str
     stderr: str
+    msg: Optional[str] = None # Added msg field
 
 Observation = CodeObservation # Alias for backwards compatibility or other usages
