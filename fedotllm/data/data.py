@@ -66,6 +66,7 @@ class Split:
     def __init__(self, name: str, data: pd.DataFrame):
         self.name = name
         self.data = data
+        self.n_rows, self.n_cols = data.shape
 
 
 class Dataset:
@@ -127,6 +128,7 @@ class Dataset:
         eda = ""
         if df.shape[1] <= 10:
             eda += "\n===== 1. BASIC INFO =====\n"
+            eda += f"Shape: {df.shape}\n" # Explicitly add shape
 
             buf = io.StringIO()
             df.info(buf=buf)
@@ -135,7 +137,25 @@ class Dataset:
             eda += info_str
 
             eda += "\n===== 2. MISSING VALUES =====\n"
-            eda += missing_values(df).to_markdown()
+            missing_df = missing_values(df)
+            if not missing_df.empty:
+                eda += missing_df.to_markdown()
+            else:
+                eda += "No missing values found.\n"
+        else: # df.shape[1] > 10 (large DataFrame)
+            eda += f"Dataset EDA for {train_split.name}\n"
+            eda += f"Shape: {df.shape}\n"
+            missing_df = missing_values(df)
+            if not missing_df.empty:
+                 eda += f"Missing values:\n{missing_df.to_markdown()}\n"
+            else:
+                eda += "No missing values found.\n"
+            eda += f"Columns: {df.columns.tolist()}\n"
+            if df.shape[0] > 10: # if more than 10 rows
+                eda += f"First 5 rows sample:\n{df.head(5).to_markdown()}\n"
+                eda += f"Last 5 rows sample:\n{df.tail(5).to_markdown()}\n"
+            else: # if 10 or less rows
+                eda += f"Full data sample:\n{df.to_markdown()}\n"
         return eda
 
     def dataset_preview(self, sample_size: int = 11):

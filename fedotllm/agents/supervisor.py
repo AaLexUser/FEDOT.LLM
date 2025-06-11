@@ -44,9 +44,20 @@ class SupervisorAgent(Agent):
         workflow.add_node("finish", finish_execution)
 
         workflow.add_edge(START, "choose_next")
-        workflow.add_edge("researcher", "choose_next")
-        workflow.add_edge("automl", "finish")
+        workflow.add_edge("researcher", "choose_next") # Loop back after researcher
+        workflow.add_edge("automl", "finish")         # AutoML goes to finish
         workflow.add_edge("finish", END)
+
+        # Add conditional edges for routing from choose_next
+        workflow.add_conditional_edges(
+            "choose_next",
+            choose_next, # The function that returns Command(goto=...)
+            {
+                NextAgent.AUTOML: "automl",
+                NextAgent.RESEARCHER: "researcher",
+                NextAgent.FINISH: "finish",
+            },
+        )
         return workflow.compile().with_config(config={"run_name": "SupervisorAgent"})
 
 
