@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Callable, List
 
 import pandas as pd
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk # Import AIMessage
 from langchain_core.runnables.schema import StreamEvent
 from typing_extensions import Any, AsyncIterator
 
@@ -12,7 +12,7 @@ from fedotllm.agents.automl.automl_chat import AutoMLAgentChat
 from fedotllm.agents.researcher.researcher import ResearcherAgent
 from fedotllm.data import Dataset
 from fedotllm.llm import AIInference, OpenaiEmbeddings
-
+from fedotllm.agents.translator import TranslatorAgent
 
 class FedotAI:
     def __init__(
@@ -45,6 +45,8 @@ class FedotAI:
             )
 
         dataset = Dataset.from_path(self.task_path)
+        translator_agent = TranslatorAgent()
+        translated_message = translator_agent.translate_input_to_english(message)
 
         automl_agent = AutoMLAgentChat(
             inference=self.inference, dataset=dataset, workspace=self.workspace
@@ -59,7 +61,28 @@ class FedotAI:
             automl_agent=automl_agent,
             researcher_agent=researcher_agent,
         ).create_graph()
-        return await entry_point.ainvoke({"messages": [HumanMessage(content=message)]})
+
+        raw_response = await entry_point.ainvoke({"messages": [HumanMessage(content=translated_message)]})
+
+        if raw_response and 'messages' in raw_response and isinstance(raw_response['messages'], list) and len(raw_response['messages']) > 0:
+            last_message = raw_response['messages'][-1]
+            # Ensure it's an AIMessage and has content to translate
+            if isinstance(last_message, AIMessage) and hasattr(last_message, 'content'):
+                ai_message_content = last_message.content
+                translated_output = translator_agent.translate_output_to_source_language(ai_message_content)
+
+                # Create a new AIMessage with the translated content, preserving other attributes
+                raw_response['messages'][-1] = AIMessage(
+                    content=translated_output,
+                    id=last_message.id if hasattr(last_message, 'id') else None, # AIMessage has id
+                    response_metadata=last_message.response_metadata if hasattr(last_message, 'response_metadata') else {},
+                    tool_calls=last_message.tool_calls if hasattr(last_message, 'tool_calls') else [],
+                    # tool_call_chunks might not be directly on AIMessage but on AIMessageChunk
+                    # usage_metadata is also often on AIMessage
+                    usage_metadata=last_message.usage_metadata if hasattr(last_message, 'usage_metadata') else None
+                )
+
+        return raw_response
 
     async def ask(self, message: str) -> AsyncIterator[Any]:
         if not self.workspace:
@@ -68,6 +91,8 @@ class FedotAI:
             )
 
         dataset = Dataset.from_path(self.task_path)
+        translator_agent = TranslatorAgent()
+        translated_message = translator_agent.translate_input_to_english(message)
 
         automl_agent = AutoMLAgentChat(
             inference=self.inference, dataset=dataset, workspace=self.workspace
@@ -84,9 +109,24 @@ class FedotAI:
         ).create_graph()
 
         async for event in entry_point.astream_events(
-            {"messages": [HumanMessage(content=message)]},
+            {"messages": [HumanMessage(content=translated_message)]},
             version="v2",
         ):
+            if event["event"] == "on_chat_model_stream" and event.get("data", {}).get("chunk"):
+                chunk = event["data"]["chunk"]
+                # Ensure chunk is AIMessageChunk and has content
+                if isinstance(chunk, AIMessageChunk) and hasattr(chunk, 'content'):
+                    translated_chunk_content = translator_agent.translate_output_to_source_language(chunk.content)
+                    # Create a new AIMessageChunk with translated content
+                    event["data"]["chunk"] = AIMessageChunk(
+                        content=translated_chunk_content,
+                        id=chunk.id if hasattr(chunk, 'id') else None,
+                        response_metadata=chunk.response_metadata if hasattr(chunk, 'response_metadata') else {},
+                        tool_calls=chunk.tool_calls if hasattr(chunk, 'tool_calls') else [],
+                        tool_call_chunks=chunk.tool_call_chunks if hasattr(chunk, 'tool_call_chunks') else [],
+                        usage_metadata=chunk.usage_metadata if hasattr(chunk, 'usage_metadata') else None
+                    )
+
             for handler in self.handlers:
                 handler(event)
             yield event
